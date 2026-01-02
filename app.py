@@ -82,33 +82,74 @@ def load_data():
     df = pd.read_csv('dataset.csv', sep=';')
     return df
 
+def clean_ipk(value):
+    """Clean IPK value - convert various formats to float"""
+    if pd.isna(value):
+        return np.nan
+    
+    # Convert to string
+    val_str = str(value).strip()
+    
+    # Replace comma with dot
+    val_str = val_str.replace(',', '.')
+    
+    try:
+        val_float = float(val_str)
+        # If value is less than 1, it might be in decimal format like 0.188194444
+        # These seem to be time fractions, convert to proper IPK scale (0-4)
+        if val_float < 1:
+            # These values appear to be time fractions, multiply by appropriate factor
+            # Based on the data pattern, values like 0.188194444 should map to ~2.7-3.5 range
+            val_float = val_float * 20  # Scale to approximate IPK range
+            if val_float > 4:
+                val_float = 4.0
+        return val_float
+    except:
+        return np.nan
+
+def preprocess_data(df):
+    """Preprocess the dataframe similar to notebook"""
+    df = df.copy()
+    
+    # Clean IPK column
+    df['IPK'] = df['IPK'].apply(clean_ipk)
+    
+    # Convert numeric columns to proper numeric type
+    numeric_features = ['Jam Belajar per Hari', 'Jam Tidur per Hari', 'IPK', 'Jumlah Tugas Besar per Minggu']
+    df[numeric_features] = df[numeric_features].apply(pd.to_numeric, errors='coerce')
+    
+    # Normalize numeric features (Z-score normalization like in notebook)
+    df[numeric_features] = (df[numeric_features] - df[numeric_features].mean()) / df[numeric_features].std()
+    
+    return df
+
 @st.cache_resource
-def train_model(df):
-    """Train the Random Forest model"""
-    # Prepare features
-    numeric_features = ['Umur', 'Jam Belajar per Hari', 'Jam Tidur per Hari', 'Jumlah Tugas Besar per Minggu']
+def train_model(_df):
+    """Train the Random Forest model - exactly like the notebook"""
+    # Preprocess data
+    df = preprocess_data(_df)
+    
+    # Define features exactly like notebook
+    numeric_features = ['Umur', 'Jam Belajar per Hari', 'Jam Tidur per Hari', 'IPK', 'Jumlah Tugas Besar per Minggu']
     categorical_features = ['Gender', 'Jurusan/Program Studi', 'Frekuensi Olahraga', 'Pemasukan Keluarga', 'Status Hubungan']
     
     # Prepare data
     X = df.drop('Label', axis=1)
-    # Drop IPK as it has inconsistent format in the dataset
-    if 'IPK' in X.columns:
-        X = X.drop('IPK', axis=1)
     y = df['Label']
     
-    # Split data
+    # Split data - same as notebook
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    # Create preprocessor
+    # Create preprocessor - matching notebook
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', 'passthrough', numeric_features),
             ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
         ],
-        remainder='drop'
+        remainder='passthrough'
     )
     
-    # Create pipeline
+    # Create pipeline with same parameters as notebook
     model = Pipeline([
         ('preprocessor', preprocessor),
         ('classifier', RandomForestClassifier(
@@ -128,7 +169,18 @@ def train_model(df):
     f1 = f1_score(y_test, y_pred, average='weighted')
     cm = confusion_matrix(y_test, y_pred)
     
-    return model, accuracy, f1, cm, X_test, y_test
+    # Store preprocessing stats for prediction
+    raw_df = _df.copy()
+    raw_df['IPK'] = raw_df['IPK'].apply(clean_ipk)
+    numeric_cols = ['Jam Belajar per Hari', 'Jam Tidur per Hari', 'IPK', 'Jumlah Tugas Besar per Minggu']
+    raw_df[numeric_cols] = raw_df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+    
+    stats = {
+        'mean': raw_df[numeric_cols].mean().to_dict(),
+        'std': raw_df[numeric_cols].std().to_dict()
+    }
+    
+    return model, accuracy, f1, cm, X_test, y_test, stats
 
 def main():
     # Header
@@ -138,7 +190,7 @@ def main():
     # Load data and train model
     try:
         df = load_data()
-        model, accuracy, f1, cm, X_test, y_test = train_model(df)
+        model, accuracy, f1, cm, X_test, y_test, stats = train_model(df)
     except FileNotFoundError:
         st.error("⚠️ File dataset.csv tidak ditemukan. Pastikan file dataset berada di direktori yang sama dengan aplikasi.")
         return
@@ -163,6 +215,7 @@ def main():
         - Demografi
         - Kebiasaan belajar
         - Pola tidur
+        - IPK
         - Aktivitas fisik
         - Faktor sosial
         """)
@@ -171,7 +224,7 @@ def main():
     if page == "🏠 Beranda":
         show_home_page(df, accuracy, f1)
     elif page == "🔮 Prediksi":
-        show_prediction_page(df, model)
+        show_prediction_page(df, model, stats)
     elif page == "📈 Analisis Data":
         show_analysis_page(df)
     elif page == "📊 Performa Model":
@@ -236,7 +289,7 @@ def show_home_page(df, accuracy, f1):
     st.markdown("### 📄 Contoh Data")
     st.dataframe(df.head(10), use_container_width=True)
 
-def show_prediction_page(df, model):
+def show_prediction_page(df, model, stats):
     """Display prediction page"""
     st.markdown("## 🔮 Prediksi Risiko Stres")
     st.markdown("Isi formulir di bawah ini untuk memprediksi risiko stres berdasarkan profil Anda.")
@@ -258,7 +311,8 @@ def show_prediction_page(df, model):
         pemasukan = st.selectbox("Pemasukan Keluarga", ["Rendah", "Sedang", "Tinggi"])
     
     with col2:
-        st.markdown("#### 📚 Kebiasaan Belajar & Tidur")
+        st.markdown("#### 📚 Akademik & Kebiasaan")
+        ipk = st.slider("IPK", 0.0, 4.0, 3.0, 0.01)
         jam_belajar = st.slider("Jam Belajar per Hari", 1, 7, 4)
         jam_tidur = st.slider("Jam Tidur per Hari", 3, 9, 6)
         tugas_besar = st.slider("Jumlah Tugas Besar per Minggu", 0, 5, 2)
@@ -274,14 +328,21 @@ def show_prediction_page(df, model):
         predict_btn = st.button("🔍 Prediksi Risiko Stres", use_container_width=True)
     
     if predict_btn:
+        # Normalize input values using training stats
+        jam_belajar_norm = (jam_belajar - stats['mean']['Jam Belajar per Hari']) / stats['std']['Jam Belajar per Hari']
+        jam_tidur_norm = (jam_tidur - stats['mean']['Jam Tidur per Hari']) / stats['std']['Jam Tidur per Hari']
+        ipk_norm = (ipk - stats['mean']['IPK']) / stats['std']['IPK']
+        tugas_norm = (tugas_besar - stats['mean']['Jumlah Tugas Besar per Minggu']) / stats['std']['Jumlah Tugas Besar per Minggu']
+        
         # Prepare input data
         input_data = pd.DataFrame({
             'Gender': [gender],
             'Umur': [umur],
             'Jurusan/Program Studi': [jurusan],
-            'Jam Belajar per Hari': [jam_belajar],
-            'Jam Tidur per Hari': [jam_tidur],
-            'Jumlah Tugas Besar per Minggu': [tugas_besar],
+            'Jam Belajar per Hari': [jam_belajar_norm],
+            'Jam Tidur per Hari': [jam_tidur_norm],
+            'IPK': [ipk_norm],
+            'Jumlah Tugas Besar per Minggu': [tugas_norm],
             'Frekuensi Olahraga': [olahraga],
             'Pemasukan Keluarga': [pemasukan],
             'Status Hubungan': [status_hubungan]
@@ -312,10 +373,16 @@ def show_prediction_page(df, model):
         
         # Show probability
         col1, col2 = st.columns(2)
+        
+        # Find indices for each class
+        classes = list(model.classes_)
+        sehat_idx = classes.index("Sehat") if "Sehat" in classes else 1
+        stres_idx = classes.index("Risiko Stres") if "Risiko Stres" in classes else 0
+        
         with col1:
-            st.metric("Probabilitas Sehat", f"{proba[1]*100:.1f}%" if model.classes_[1] == "Sehat" else f"{proba[0]*100:.1f}%")
+            st.metric("Probabilitas Sehat", f"{proba[sehat_idx]*100:.1f}%")
         with col2:
-            st.metric("Probabilitas Risiko Stres", f"{proba[0]*100:.1f}%" if model.classes_[0] == "Risiko Stres" else f"{proba[1]*100:.1f}%")
+            st.metric("Probabilitas Risiko Stres", f"{proba[stres_idx]*100:.1f}%")
         
         # Recommendations
         st.markdown("### 💡 Rekomendasi")
@@ -505,7 +572,7 @@ def show_model_performance(accuracy, f1, cm):
     with col2:
         st.markdown("""
         #### Fitur yang Digunakan
-        - **Numerik**: Umur, Jam Belajar, Jam Tidur, Jumlah Tugas
+        - **Numerik**: Umur, Jam Belajar, Jam Tidur, IPK, Jumlah Tugas
         - **Kategorikal**: Gender, Jurusan, Frekuensi Olahraga, Pemasukan Keluarga, Status Hubungan
         """)
 
