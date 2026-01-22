@@ -23,11 +23,11 @@ def generate_certificate_image(name, result, proba_sehat, proba_stres, input_dat
     
     # Try to load fonts
     try:
-        title_font = ImageFont.truetype("arial.ttf", 45)
-        name_font = ImageFont.truetype("arial.ttf", 35)
-        label_font = ImageFont.truetype("arial.ttf", 25)
-        result_font = ImageFont.truetype("arialbd.ttf", 60)
-        footer_font = ImageFont.truetype("arial.ttf", 20)
+        title_font = ImageFont.truetype("DejaVuSans.ttf", 45)
+        name_font = ImageFont.truetype("DejaVuSans.ttf", 35)
+        label_font = ImageFont.truetype("DejaVuSans.ttf", 25)
+        result_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 60)
+        footer_font = ImageFont.truetype("DejaVuSans.ttf", 20)
     except:
         title_font = ImageFont.load_default()
         name_font = ImageFont.load_default()
